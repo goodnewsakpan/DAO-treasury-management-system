@@ -188,3 +188,86 @@
         (ok proposal-id)
     )
 )
+
+(define-public (vote (proposal-id uint) (vote-for bool))
+    (let (
+        (proposal (unwrap! (get-proposal proposal-id) ERR-PROPOSAL-NOT-FOUND))
+        (voter-weight (get-member-weight tx-sender))
+    )
+        ;; Validation checks
+        (asserts! (is-dao-member tx-sender) ERR-NOT-AUTHORIZED)
+        (asserts! (> voter-weight u0) ERR-INVALID-WEIGHT)
+        (asserts! (check-proposal-active proposal-id) ERR-PROPOSAL-EXPIRED)
+        (asserts! (not (has-voted proposal-id tx-sender)) ERR-ALREADY-VOTED)
+        
+        (map-set votes {proposal-id: proposal-id, voter: tx-sender} true)
+        
+        (if vote-for
+            (map-set proposals proposal-id 
+                (merge proposal {yes-votes: (+ (get yes-votes proposal) voter-weight)}))
+            (map-set proposals proposal-id 
+                (merge proposal {no-votes: (+ (get no-votes proposal) voter-weight)}))
+        )
+        (ok true)
+    )
+)
+
+(define-public (execute-proposal (proposal-id uint))
+    (let (
+        (proposal (unwrap! (get-proposal proposal-id) ERR-PROPOSAL-NOT-FOUND))
+    )
+        ;; Validation checks
+        (asserts! (check-proposal-active proposal-id) ERR-PROPOSAL-EXPIRED)
+        (asserts! (> (get yes-votes proposal) (get no-votes proposal)) ERR-NOT-AUTHORIZED)
+        
+        ;; Verify funds again before execution
+        (asserts! (>= (stx-get-balance (as-contract tx-sender)) (get amount proposal)) ERR-INSUFFICIENT-FUNDS)
+        
+        ;; Transfer STX to recipient
+        (try! (as-contract (stx-transfer? 
+            (get amount proposal) 
+            tx-sender 
+            (get recipient proposal))))
+        
+        ;; Mark proposal as executed
+        (map-set proposals proposal-id 
+            (merge proposal {executed: true}))
+        
+        (ok true)
+    )
+)
+
+;; Staking functions with additional checks
+(define-public (stake-treasury-funds (amount uint) (pool-contract <staking-pool-trait>))
+    (begin
+        (asserts! (is-eq tx-sender (var-get dao-owner)) ERR-NOT-AUTHORIZED)
+        (asserts! (> amount u0) ERR-ZERO-AMOUNT)
+        (asserts! (>= (stx-get-balance (as-contract tx-sender)) amount) ERR-INSUFFICIENT-FUNDS)
+        
+        ;; Transfer STX to farming pool and stake
+        (try! (as-contract (contract-call? pool-contract stake amount)))
+        (ok true)
+    )
+)
+
+(define-public (unstake-treasury-funds (amount uint) (pool-contract <staking-pool-trait>))
+    (begin
+        (asserts! (is-eq tx-sender (var-get dao-owner)) ERR-NOT-AUTHORIZED)
+        (asserts! (> amount u0) ERR-ZERO-AMOUNT)
+        
+        (try! (as-contract (contract-call? pool-contract unstake amount)))
+        (ok true)
+    )
+)
+
+
+;; Emergency functions with additional validation
+(define-public (change-owner (new-owner principal))
+    (begin
+        (asserts! (is-eq tx-sender (var-get dao-owner)) ERR-NOT-AUTHORIZED)
+        (asserts! (not (is-eq new-owner (var-get dao-owner))) ERR-INVALID-RECIPIENT)
+        
+        (var-set dao-owner new-owner)
+        (ok true)
+    )
+)
