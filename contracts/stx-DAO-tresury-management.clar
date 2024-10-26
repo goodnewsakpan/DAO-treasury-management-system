@@ -127,3 +127,64 @@
         (<= current-block (+ (get start-block proposal) VOTING_PERIOD))
     ))
 )
+
+;; Public functions with enhanced validation
+(define-public (add-member (member principal) (weight uint))
+    (begin
+        (asserts! (is-eq tx-sender (var-get dao-owner)) ERR-NOT-AUTHORIZED)
+        (asserts! (is-valid-weight weight) ERR-INVALID-WEIGHT)
+        (asserts! (not (is-dao-member member)) ERR-ALREADY-VOTED)
+        
+        ;; Update member count if this is a new member
+        (if (is-eq (get-member-weight member) u0)
+            (var-set total-members (+ (var-get total-members) u1))
+            true
+        )
+        
+        (ok (map-set member-weights member weight))
+    )
+)
+
+(define-public (update-member-weight (member principal) (new-weight uint))
+    (begin
+        (asserts! (is-eq tx-sender (var-get dao-owner)) ERR-NOT-AUTHORIZED)
+        (asserts! (is-valid-weight new-weight) ERR-INVALID-WEIGHT)
+        (asserts! (is-dao-member member) ERR-NOT-AUTHORIZED)
+        
+        (ok (map-set member-weights member new-weight))
+    )
+)
+
+(define-public (create-proposal (title (string-ascii 50)) 
+                              (description (string-ascii 500)) 
+                              (amount uint)
+                              (recipient principal))
+    (let (
+        (proposal-id (+ (var-get proposal-count) u1))
+    )
+        ;; Input validation
+        (asserts! (is-dao-member tx-sender) ERR-NOT-AUTHORIZED)
+        (asserts! (is-valid-title title) ERR-INVALID-TITLE)
+        (asserts! (is-valid-description description) ERR-INVALID-DESCRIPTION)
+        (asserts! (is-valid-amount amount) ERR-INVALID-AMOUNT)
+        (asserts! (is-valid-recipient recipient) ERR-INVALID-RECIPIENT)
+        
+        ;; Check contract balance
+        (asserts! (>= (stx-get-balance (as-contract tx-sender)) amount) ERR-INSUFFICIENT-FUNDS)
+        
+        (map-set proposals proposal-id {
+            proposer: tx-sender,
+            title: title,
+            description: description,
+            amount: amount,
+            recipient: recipient,
+            start-block: block-height,
+            yes-votes: u0,
+            no-votes: u0,
+            executed: false
+        })
+        
+        (var-set proposal-count proposal-id)
+        (ok proposal-id)
+    )
+)
